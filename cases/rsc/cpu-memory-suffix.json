@@ -1,0 +1,22 @@
+{
+  "description": "m suffix parsing should preserve MiB-normalized value in SLURM_RSC_M",
+  "expect": {
+    "env": {
+      "SLURM_RSC_M": "4096"
+    },
+    "job_state_in": [
+      "COMPLETED"
+    ],
+    "submit_result": "accepted"
+  },
+  "id": "cpu-memory-suffix",
+  "notes_ref": [
+    "notes/slurm-rsc-option-impl.md:170"
+  ],
+  "script": "printenv SLURM_RSC_M\n",
+  "submit_args": [
+    "--rsc",
+    "p=1:c=1:m=4G"
+  ],
+  "submit_mode": "sbatch"
+}

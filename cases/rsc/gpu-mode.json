@@ -1,0 +1,22 @@
+{
+  "description": "GPU mode should be accepted and expose SLURM_RSC_G without CPU env keys",
+  "expect": {
+    "env": {
+      "SLURM_RSC_G": "1"
+    },
+    "job_state_in": [
+      "COMPLETED"
+    ],
+    "submit_result": "accepted"
+  },
+  "id": "gpu-mode",
+  "notes_ref": [
+    "notes/slurm-rsc-option-impl.md:1134"
+  ],
+  "script": "printenv SLURM_RSC_G\nprintenv SLURM_RSC_P || true\n",
+  "submit_args": [
+    "--rsc",
+    "g=1"
+  ],
+  "submit_mode": "sbatch"
+}

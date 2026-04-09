@@ -1,0 +1,19 @@
+{
+  "description": "Conflicting native options should either reject or leave a warning trail depending on cluster policy",
+  "expect": {
+    "submit_result": "rejected"
+  },
+  "id": "warn-or-deny-conflict",
+  "notes_ref": [
+    "notes/slurm-rsc-option-impl.md:383",
+    "notes/slurm-rsc-option-impl.md:384"
+  ],
+  "script": "echo should-not-run\n",
+  "submit_args": [
+    "--ntasks",
+    "2",
+    "--rsc",
+    "p=1:c=1"
+  ],
+  "submit_mode": "sbatch"
+}

@@ -1,0 +1,4 @@
+artifacts/runs/
+__pycache__/
+*.pyc
+.codex

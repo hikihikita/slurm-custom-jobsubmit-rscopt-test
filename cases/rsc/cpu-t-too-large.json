@@ -1,0 +1,19 @@
+{
+  "description": "t > c*4 should be rejected before reaching the queue",
+  "expect": {
+    "submit_result": "rejected",
+    "submit_stderr_contains": [
+      "exceeds 4x c"
+    ]
+  },
+  "id": "cpu-t-too-large",
+  "notes_ref": [
+    "notes/slurm-rsc-option-impl.md:380"
+  ],
+  "script": "echo should-not-run\n",
+  "submit_args": [
+    "--rsc",
+    "p=1:c=1:t=5"
+  ],
+  "submit_mode": "sbatch"
+}
