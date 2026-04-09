@@ -272,6 +272,18 @@ def check_mapping(actual, expected, label):
     return failures
 
 
+def check_absent(actual, expected_absent, label):
+    failures = []
+    for key in expected_absent:
+        if key in actual:
+            failures.append(
+                "{0}.{1} expected to be absent but got {2!r}".format(
+                    label, key, actual.get(key)
+                )
+            )
+    return failures
+
+
 def format_submit_args(submit_args):
     if not submit_args:
         return "(none)"
@@ -386,6 +398,9 @@ def evaluate_case(case_data, result_data):
     )
 
     failures.extend(check_mapping(result_data.get("env", {}), expect.get("env", {}), "env"))
+    failures.extend(
+        check_absent(result_data.get("env", {}), expect.get("env_absent", []), "env")
+    )
     failures.extend(
         check_mapping(result_data.get("job", {}), expect.get("job", {}), "job")
     )

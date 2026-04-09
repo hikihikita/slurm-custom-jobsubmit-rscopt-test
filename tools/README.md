@@ -73,6 +73,7 @@ python3 tools/rsc_verify.py report --run 20260409T010203Z-abcd1234
 - `stdout_contains`: ジョブ stdout に含まれるべき文字列配列
 - `stderr_contains`: ジョブ stderr に含まれるべき文字列配列
 - `env`: ジョブ内で観測した `SLURM_RSC_*` / `OMP_*` の期待値
+- `env_absent`: ジョブ内で観測されてはいけない環境変数名配列
 - `job`: `scontrol show job -o` と `sacct` の主要値に対する部分一致
 - `job_state_in`: 許容する `JobState` 配列
 
@@ -80,4 +81,6 @@ python3 tools/rsc_verify.py report --run 20260409T010203Z-abcd1234
 
 - `sbatch` ではツールが `--output` / `--error` を自動付与する。
 - ジョブ内では `SLURM_RSC_*` と `OMP_*` を自動採取する。
+- GPU モードでは `SLURM_RSC_G` と `SLURM_RSC_SPEC` を主に確認し、CPU 系 `SLURM_RSC_*` と `OMP_*` は `env_absent` で未存在を検証できる。
+- CPU モードでは `SLURM_RSC_C_EFF` も採取されるため、`cpus_per_task` 由来の実効コア数チェックに使える。
 - ノート中の代表パターンを `cases/rsc/` に雛形として用意しているが、クラスタ依存の値は必要に応じて調整すること。

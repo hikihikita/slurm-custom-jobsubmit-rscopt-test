@@ -4,7 +4,11 @@
     "env": {
       "OMP_NUM_THREADS": "2",
       "OMP_PLACES": "threads",
-      "OMP_PROC_BIND": "close"
+      "OMP_PROC_BIND": "close",
+      "SLURM_RSC_C": "1",
+      "SLURM_RSC_C_EFF": "1",
+      "SLURM_RSC_P": "16",
+      "SLURM_RSC_T": "2"
     },
     "job_state_in": [
       "COMPLETED"
@@ -13,7 +17,8 @@
   },
   "id": "cpu-omp-close",
   "notes_ref": [
-    "notes/slurm-rsc-option-impl.md:1145"
+    "notes/slurm-rsc-option-impl.md:1188",
+    "notes/slurm-rsc-option-impl.md:1251"
   ],
   "script": "printenv OMP_NUM_THREADS\nprintenv OMP_PROC_BIND\nprintenv OMP_PLACES\n",
   "submit_args": [

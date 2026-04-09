@@ -32,6 +32,7 @@ class ParseHelpersTest(unittest.TestCase):
             "expect": {
                 "submit_result": "accepted",
                 "env": {"OMP_NUM_THREADS": "2"},
+                "env_absent": ["SLURM_RSC_G"],
                 "job": {"JobState": "COMPLETED"},
                 "stdout_contains": ["hello"],
             },
@@ -61,6 +62,32 @@ class ParseHelpersTest(unittest.TestCase):
         }
         failures = rsc_verify.evaluate_case(case_data, result_data)
         self.assertEqual(len(failures), 2)
+
+    def test_evaluate_case_env_absent_failure(self):
+        case_data = {
+            "id": "gpu",
+            "description": "gpu",
+            "submit_mode": "sbatch",
+            "expect": {
+                "submit_result": "accepted",
+                "env": {"SLURM_RSC_G": "1"},
+                "env_absent": ["SLURM_RSC_P", "OMP_NUM_THREADS"],
+            },
+        }
+        result_data = {
+            "submit": {"returncode": 0, "stdout": "", "stderr": ""},
+            "env": {
+                "SLURM_RSC_G": "1",
+                "SLURM_RSC_P": "1",
+                "OMP_NUM_THREADS": "2",
+            },
+            "job": {},
+            "stdout": "",
+            "stderr": "",
+        }
+        failures = rsc_verify.evaluate_case(case_data, result_data)
+        self.assertIn("env.SLURM_RSC_P expected to be absent but got '1'", failures)
+        self.assertIn("env.OMP_NUM_THREADS expected to be absent but got '2'", failures)
 
     def test_load_case_requires_fields(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as fh:

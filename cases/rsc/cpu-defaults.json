@@ -1,6 +1,16 @@
 {
   "description": "--rsc omitted: CPU default flow should be accepted and expose default-derived env",
   "expect": {
+    "env": {
+      "OMP_NUM_THREADS": "1",
+      "OMP_PLACES": "threads",
+      "OMP_PROC_BIND": "close",
+      "SLURM_RSC_C": "1",
+      "SLURM_RSC_C_EFF": "1",
+      "SLURM_RSC_P": "1",
+      "SLURM_RSC_SPEC": "",
+      "SLURM_RSC_T": "1"
+    },
     "job_state_in": [
       "COMPLETED"
     ],
@@ -12,7 +22,8 @@
   "id": "cpu-defaults",
   "notes_ref": [
     "notes/slurm-rsc-option-impl.md:138",
-    "notes/slurm-rsc-option-impl.md:157"
+    "notes/slurm-rsc-option-impl.md:152",
+    "notes/slurm-rsc-option-impl.md:1240"
   ],
   "script": "echo cpu-defaults\nprintenv SLURM_RSC_SPEC || true\nprintenv SLURM_RSC_P || true\nprintenv SLURM_RSC_T || true\nprintenv SLURM_RSC_C || true\nprintenv SLURM_RSC_M || true\n",
   "submit_args": [],

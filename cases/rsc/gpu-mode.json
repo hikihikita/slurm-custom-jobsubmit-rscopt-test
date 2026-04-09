@@ -4,6 +4,16 @@
     "env": {
       "SLURM_RSC_G": "1"
     },
+    "env_absent": [
+      "OMP_NUM_THREADS",
+      "OMP_PLACES",
+      "OMP_PROC_BIND",
+      "SLURM_RSC_C",
+      "SLURM_RSC_C_EFF",
+      "SLURM_RSC_M",
+      "SLURM_RSC_P",
+      "SLURM_RSC_T"
+    ],
     "job_state_in": [
       "COMPLETED"
     ],
@@ -11,7 +21,7 @@
   },
   "id": "gpu-mode",
   "notes_ref": [
-    "notes/slurm-rsc-option-impl.md:1134"
+    "notes/slurm-rsc-option-impl.md:1233"
   ],
   "script": "printenv SLURM_RSC_G\nprintenv SLURM_RSC_P || true\n",
   "submit_args": [
