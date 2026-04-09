@@ -90,7 +90,7 @@ class ParseHelpersTest(unittest.TestCase):
         result_data = {
             "job_id": "123",
             "job": {"JobState": "COMPLETED"},
-            "submit": {"returncode": 0},
+            "submit": {"returncode": 0, "argv": ["sbatch", "--rsc", "p=1:c=1", "job.sh"]},
             "poll_error": None,
         }
         summary = rsc_verify.build_case_summary(
@@ -99,8 +99,29 @@ class ParseHelpersTest(unittest.TestCase):
         self.assertEqual(summary["id"], "cpu-defaults")
         self.assertEqual(summary["description"], "default flow")
         self.assertEqual(summary["submit_args"], ["--rsc", "p=1:c=1"])
+        self.assertEqual(summary["submit_command"], "sbatch --rsc p=1:c=1 job.sh")
         self.assertEqual(summary["job_state"], "COMPLETED")
         self.assertEqual(summary["artifacts_dir"], "artifacts/runs/demo/cpu-defaults")
+
+    def test_print_case_start_includes_submit_command(self):
+        case_data = {
+            "id": "cpu-defaults",
+            "description": "default flow",
+            "submit_mode": "sbatch",
+            "submit_args": ["--rsc", "p=1:c=1"],
+            "notes_ref": ["notes/slurm-rsc-option-impl.md:138"],
+        }
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rsc_verify.print_case_start(
+                case_data,
+                ["sbatch", "--output", "job.stdout", "--error", "job.stderr", "--rsc", "p=1:c=1", "runtime_wrapper.sh"],
+                1,
+                3,
+            )
+        text = buf.getvalue()
+        self.assertIn("[1/3] cpu-defaults", text)
+        self.assertIn("submit_command: sbatch --output job.stdout --error job.stderr --rsc p=1:c=1 runtime_wrapper.sh", text)
 
     def test_print_case_result_failure_includes_artifacts(self):
         case_summary = {
@@ -137,6 +158,7 @@ class ParseHelpersTest(unittest.TestCase):
                     "failures": [],
                     "job_id": "10",
                     "job_state": "COMPLETED",
+                    "submit_command": "sbatch --rsc p=1:c=1 ok.sh",
                     "artifacts_dir": "artifacts/runs/demo/ok",
                 },
                 {
@@ -146,6 +168,7 @@ class ParseHelpersTest(unittest.TestCase):
                     "failures": ["something failed"],
                     "job_id": None,
                     "job_state": None,
+                    "submit_command": "sbatch --rsc p=1:c=1 bad.sh",
                     "artifacts_dir": "artifacts/runs/demo/bad",
                 },
             ],
@@ -156,6 +179,7 @@ class ParseHelpersTest(unittest.TestCase):
         text = buf.getvalue()
         self.assertIn("PASS ok - success case", text)
         self.assertIn("FAIL bad - failure case", text)
+        self.assertIn("submit_command: sbatch --rsc p=1:c=1 ok.sh", text)
         self.assertIn("artifacts/runs/demo/bad", text)
 
 

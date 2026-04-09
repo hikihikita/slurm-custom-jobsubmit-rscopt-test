@@ -284,6 +284,7 @@ def build_case_summary(case_data, result_data, case_dir, failures):
         "description": case_data.get("description", ""),
         "submit_mode": case_data["submit_mode"],
         "submit_args": list(case_data.get("submit_args", [])),
+        "submit_command": shell_join(result_data["submit"]["argv"]),
         "notes_ref": list(case_data.get("notes_ref", [])),
         "passed": not failures,
         "failures": failures,
@@ -301,12 +302,13 @@ def print_run_header(run_id, total_cases, run_dir):
     print("artifacts:", run_dir)
 
 
-def print_case_start(case_data, index, total):
+def print_case_start(case_data, submit_argv, index, total):
     print("")
     print("[{0}/{1}] {2}".format(index, total, case_data["id"]))
     print("  description:", case_data.get("description", ""))
     print("  submit_mode:", case_data["submit_mode"])
     print("  submit_args:", format_submit_args(case_data.get("submit_args", [])))
+    print("  submit_command:", shell_join(submit_argv))
     notes_ref = case_data.get("notes_ref", [])
     if notes_ref:
         print("  notes_ref:", ", ".join(notes_ref))
@@ -346,6 +348,8 @@ def print_summary(summary):
         if extras:
             detail += " ({0})".format(", ".join(extras))
         print(" ", detail)
+        if case.get("submit_command"):
+            print("   submit_command:", case["submit_command"])
         if not case["passed"]:
             for failure in case.get("failures", []):
                 print("   failure:", failure)
@@ -504,11 +508,14 @@ def run_suite(case_paths, run_id, timeout_seconds, poll_interval):
         "cases": [],
     }
 
-    print_run_header(summary["run_id"], len(case_paths), run_dir)
-
     for index, case_path in enumerate(case_paths, start=1):
         case_data = load_case(case_path)
-        print_case_start(case_data, index, len(case_paths))
+        case_dir = os.path.join(run_dir, case_data["id"])
+        wrapper_path = os.path.join(case_dir, "runtime_wrapper.sh")
+        submit_argv, _, _ = prepare_submit_command(case_data, case_dir, wrapper_path)
+        if index == 1:
+            print_run_header(summary["run_id"], len(case_paths), run_dir)
+        print_case_start(case_data, submit_argv, index, len(case_paths))
         result = run_case(case_path, run_dir, timeout_seconds, poll_interval)
         print_case_result(result)
         summary["cases"].append(result)
