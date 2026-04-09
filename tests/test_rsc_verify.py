@@ -1,6 +1,8 @@
 import os
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 
 from tools import rsc_verify
 
@@ -69,6 +71,92 @@ class ParseHelpersTest(unittest.TestCase):
                 rsc_verify.load_case(path)
         finally:
             os.unlink(path)
+
+    def test_format_submit_args(self):
+        self.assertEqual(rsc_verify.format_submit_args([]), "(none)")
+        self.assertEqual(
+            rsc_verify.format_submit_args(["--rsc", "p=4:t=2:c=4"]),
+            "--rsc p=4:t=2:c=4",
+        )
+
+    def test_build_case_summary(self):
+        case_data = {
+            "id": "cpu-defaults",
+            "description": "default flow",
+            "submit_mode": "sbatch",
+            "submit_args": ["--rsc", "p=1:c=1"],
+            "notes_ref": ["notes/slurm-rsc-option-impl.md:138"],
+        }
+        result_data = {
+            "job_id": "123",
+            "job": {"JobState": "COMPLETED"},
+            "submit": {"returncode": 0},
+            "poll_error": None,
+        }
+        summary = rsc_verify.build_case_summary(
+            case_data, result_data, "artifacts/runs/demo/cpu-defaults", []
+        )
+        self.assertEqual(summary["id"], "cpu-defaults")
+        self.assertEqual(summary["description"], "default flow")
+        self.assertEqual(summary["submit_args"], ["--rsc", "p=1:c=1"])
+        self.assertEqual(summary["job_state"], "COMPLETED")
+        self.assertEqual(summary["artifacts_dir"], "artifacts/runs/demo/cpu-defaults")
+
+    def test_print_case_result_failure_includes_artifacts(self):
+        case_summary = {
+            "id": "bad",
+            "description": "bad case",
+            "passed": False,
+            "failures": ["submit_result expected 'accepted' but got 'rejected'"],
+            "job_id": "456",
+            "job_state": "FAILED",
+            "submit_returncode": 1,
+            "artifacts_dir": "artifacts/runs/demo/bad",
+            "poll_error": "timeout",
+        }
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rsc_verify.print_case_result(case_summary)
+        text = buf.getvalue()
+        self.assertIn("FAIL", text)
+        self.assertIn("job_id=456", text)
+        self.assertIn("failure:", text)
+        self.assertIn("artifacts/runs/demo/bad", text)
+        self.assertIn("poll_error: timeout", text)
+
+    def test_print_summary_uses_description(self):
+        summary = {
+            "run_id": "demo-run",
+            "passed": 1,
+            "failed": 1,
+            "cases": [
+                {
+                    "id": "ok",
+                    "description": "success case",
+                    "passed": True,
+                    "failures": [],
+                    "job_id": "10",
+                    "job_state": "COMPLETED",
+                    "artifacts_dir": "artifacts/runs/demo/ok",
+                },
+                {
+                    "id": "bad",
+                    "description": "failure case",
+                    "passed": False,
+                    "failures": ["something failed"],
+                    "job_id": None,
+                    "job_state": None,
+                    "artifacts_dir": "artifacts/runs/demo/bad",
+                },
+            ],
+        }
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rsc_verify.print_summary(summary)
+        text = buf.getvalue()
+        self.assertIn("PASS ok - success case", text)
+        self.assertIn("FAIL bad - failure case", text)
+        self.assertIn("artifacts/runs/demo/bad", text)
 
 
 if __name__ == "__main__":

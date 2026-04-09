@@ -10,7 +10,6 @@ import re
 import shlex
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
 
@@ -273,6 +272,86 @@ def check_mapping(actual, expected, label):
     return failures
 
 
+def format_submit_args(submit_args):
+    if not submit_args:
+        return "(none)"
+    return shell_join(submit_args)
+
+
+def build_case_summary(case_data, result_data, case_dir, failures):
+    return {
+        "id": case_data["id"],
+        "description": case_data.get("description", ""),
+        "submit_mode": case_data["submit_mode"],
+        "submit_args": list(case_data.get("submit_args", [])),
+        "notes_ref": list(case_data.get("notes_ref", [])),
+        "passed": not failures,
+        "failures": failures,
+        "job_id": result_data.get("job_id"),
+        "job_state": result_data.get("job", {}).get("JobState"),
+        "submit_returncode": result_data["submit"]["returncode"],
+        "artifacts_dir": case_dir,
+        "poll_error": result_data.get("poll_error"),
+    }
+
+
+def print_run_header(run_id, total_cases, run_dir):
+    print("run_id:", run_id)
+    print("cases:", total_cases)
+    print("artifacts:", run_dir)
+
+
+def print_case_start(case_data, index, total):
+    print("")
+    print("[{0}/{1}] {2}".format(index, total, case_data["id"]))
+    print("  description:", case_data.get("description", ""))
+    print("  submit_mode:", case_data["submit_mode"])
+    print("  submit_args:", format_submit_args(case_data.get("submit_args", [])))
+    notes_ref = case_data.get("notes_ref", [])
+    if notes_ref:
+        print("  notes_ref:", ", ".join(notes_ref))
+
+
+def print_case_result(case_summary):
+    status = "PASS" if case_summary["passed"] else "FAIL"
+    suffix = []
+    if case_summary.get("job_id"):
+        suffix.append("job_id={0}".format(case_summary["job_id"]))
+    if case_summary.get("job_state"):
+        suffix.append("state={0}".format(case_summary["job_state"]))
+    suffix.append("submit_rc={0}".format(case_summary["submit_returncode"]))
+    print("  result: {0} ({1})".format(status, ", ".join(suffix)))
+    if not case_summary["passed"]:
+        for failure in case_summary.get("failures", []):
+            print("  failure:", failure)
+        if case_summary.get("poll_error"):
+            print("  poll_error:", case_summary["poll_error"])
+    print("  artifacts:", case_summary["artifacts_dir"])
+
+
+def print_summary(summary):
+    print("")
+    print("summary:")
+    print("  run_id:", summary["run_id"])
+    print("  passed:", summary["passed"])
+    print("  failed:", summary["failed"])
+    for case in summary["cases"]:
+        status = "PASS" if case["passed"] else "FAIL"
+        detail = "{0} {1} - {2}".format(status, case["id"], case.get("description", ""))
+        extras = []
+        if case.get("job_id"):
+            extras.append("job_id={0}".format(case["job_id"]))
+        if case.get("job_state"):
+            extras.append("state={0}".format(case["job_state"]))
+        if extras:
+            detail += " ({0})".format(", ".join(extras))
+        print(" ", detail)
+        if not case["passed"]:
+            for failure in case.get("failures", []):
+                print("   failure:", failure)
+            print("   artifacts:", case["artifacts_dir"])
+
+
 def evaluate_case(case_data, result_data):
     expect = case_data.get("expect", {})
     failures = []
@@ -407,13 +486,7 @@ def run_case(case_path, run_dir, timeout_seconds, poll_interval):
     write_text(os.path.join(case_dir, "stdout.txt"), job_stdout)
     write_text(os.path.join(case_dir, "stderr.txt"), job_stderr)
 
-    return {
-        "id": case_data["id"],
-        "passed": not failures,
-        "failures": failures,
-        "job_id": job_id,
-        "submit_returncode": submit_result["returncode"],
-    }
+    return build_case_summary(case_data, result_data, case_dir, failures)
 
 
 def run_suite(case_paths, run_id, timeout_seconds, poll_interval):
@@ -431,8 +504,13 @@ def run_suite(case_paths, run_id, timeout_seconds, poll_interval):
         "cases": [],
     }
 
-    for case_path in case_paths:
+    print_run_header(summary["run_id"], len(case_paths), run_dir)
+
+    for index, case_path in enumerate(case_paths, start=1):
+        case_data = load_case(case_path)
+        print_case_start(case_data, index, len(case_paths))
         result = run_case(case_path, run_dir, timeout_seconds, poll_interval)
+        print_case_result(result)
         summary["cases"].append(result)
 
     passed = len([case for case in summary["cases"] if case["passed"]])
@@ -441,17 +519,6 @@ def run_suite(case_paths, run_id, timeout_seconds, poll_interval):
     summary["completed_at"] = utc_timestamp()
     write_json(os.path.join(run_dir, "summary.json"), summary)
     return run_dir, summary
-
-
-def print_summary(summary):
-    print("run_id:", summary["run_id"])
-    print("passed:", summary["passed"])
-    print("failed:", summary["failed"])
-    for case in summary["cases"]:
-        status = "PASS" if case["passed"] else "FAIL"
-        print("[{0}] {1}".format(status, case["id"]))
-        for failure in case.get("failures", []):
-            print("  -", failure)
 
 
 def report_run(run_path):
