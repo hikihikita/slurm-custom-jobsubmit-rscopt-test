@@ -130,11 +130,47 @@ static int rsc_opt_cb(int val, const char *optarg, int remote)
 
 ### 4-4. `slurm_spank_init_post_opt()` での処理
 
-コールバックで退避した `rsc_optarg` をここで解析・検証し、SPANK環境変数にセットする。
+コールバックで退避した `rsc_optarg` をここで解析・検証し、job control 環境変数にセットする。
+
+**環境変数の 3 層構造**
+
+```
+[LOCAL/ALLOCATOR: sbatch / srun / salloc]
+  spank_job_control_setenv(sp, "RSC_CONFIG", ...)   ← SPANK_ プレフィックスなし
+  spank_job_control_setenv(sp, "RSC_CLUSTER", ...)
+  spank_job_control_setenv(sp, "RSC_SPEC", ...)
+  spank_job_control_setenv(sp, "RSC_P/T/C/M/G", ...)
+        |
+        | Slurm が spank_job_env に転記する際に自動で "SPANK_" を付加
+        v
+[slurmctld: job_submit_rsc.c が spank_job_env から読む]
+  SPANK_RSC_CONFIG / SPANK_RSC_CLUSTER / SPANK_RSC_SPEC / SPANK_RSC_P/T/C/M/G
+  ※ SPANK_RSC_C_EFF は job_submit が spank_job_env に書き込む
+        |
+        | slurmd に渡る
+        v
+[REMOTE: slurm_spank_user_init が SPANK_RSC_* を読んで SLURM_RSC_* にコピー]
+  SLURM_RSC_SPEC / SLURM_RSC_P / SLURM_RSC_T / SLURM_RSC_C / SLURM_RSC_M
+  SLURM_RSC_C_EFF / SLURM_RSC_G / OMP_NUM_THREADS / OMP_PROC_BIND / OMP_PLACES
+        |
+        v
+  [ユーザジョブが参照する変数]
+```
+
+`slurm_spank_init_post_opt()` は LOCAL/ALLOCATOR と REMOTE の両コンテキストで呼ばれる。
+`spank_job_control_setenv()` は LOCAL/ALLOCATOR でのみ有効なため、
+REMOTE コンテキストでは即 return する。
 
 ```c
 int slurm_spank_init_post_opt(spank_t sp, int ac, char **av)
 {
+    // spank_job_control_setenv は LOCAL/ALLOCATOR context でのみ有効。
+    // REMOTE (slurmd) では job control env はすでに設定済みで、
+    // user_init が SLURM_RSC_* へのコピーを担当する。
+    spank_context_t ctx = spank_context();
+    if (ctx != S_CTX_LOCAL && ctx != S_CTX_ALLOCATOR)
+        return 0;
+
     // rsc_optarg == NULL は "--rsc 未指定" を意味する。
     // この場合も CPUモードのデフォルト値で処理するためフローを継続する。
     // (GPU モードへは進まない)
@@ -147,9 +183,11 @@ int slurm_spank_init_post_opt(spank_t sp, int ac, char **av)
     }
 
     // 設定ファイルを読み込む（フローチャート参照）
-    // SLURM_CLUSTER_NAME を読み取り、クラスタ別 m_default を解決する
+    // LOCAL context ではプロセス環境変数から SLURM_CLUSTER_NAME を読む
     char cluster[128] = "";
-    spank_getenv(sp, "SLURM_CLUSTER_NAME", cluster, sizeof(cluster));
+    const char *cluster_env = getenv("SLURM_CLUSTER_NAME");
+    if (cluster_env)
+        snprintf(cluster, sizeof(cluster), "%s", cluster_env);
     rsc_config_t cfg;
     if (load_rsc_config(config_path, cluster, &cfg) != 0)
         return -1;  // エラーメッセージは load_rsc_config 内で出力
@@ -184,14 +222,17 @@ apply_cpu_defaults:
     //   (CPU 非オーバーコミット前提で ntasks_per_node が確定するため正確に判定可能)
     // ※ p, c の上限は Slurm パーティション / QOS 設定に委任
 
-    // 成功時:
-    spank_setenv(sp, "SPANK_RSC_SPEC", rsc_optarg ? rsc_optarg : "", 1); // 未加工文字列（省略時は ""）
-    spank_setenv(sp, "SPANK_RSC_P", p_str, 1);
-    spank_setenv(sp, "SPANK_RSC_T", t_str, 1);
-    spank_setenv(sp, "SPANK_RSC_C", c_str, 1);
-    spank_setenv(sp, "SPANK_RSC_M", m_mib_str, 1);  // 常に MiB 値
+    // 成功時: spank_job_control_setenv で job control env にセット
+    // Slurm が spank_job_env に転記する際に自動で "SPANK_" を付加する
+    spank_job_control_setenv(sp, "RSC_CONFIG", config_path, 1);
+    spank_job_control_setenv(sp, "RSC_CLUSTER", cluster, 1);
+    spank_job_control_setenv(sp, "RSC_SPEC", rsc_optarg ? rsc_optarg : "", 1); // 省略時は ""
+    spank_job_control_setenv(sp, "RSC_P", p_str, 1);
+    spank_job_control_setenv(sp, "RSC_T", t_str, 1);
+    spank_job_control_setenv(sp, "RSC_C", c_str, 1);
+    spank_job_control_setenv(sp, "RSC_M", m_mib_str, 1);  // 常に MiB 値
     // GPU時のみ:
-    spank_setenv(sp, "SPANK_RSC_G", g_str, 1);
+    spank_job_control_setenv(sp, "RSC_G", g_str, 1);
 
     return 0;
 }
@@ -216,15 +257,17 @@ uint64_t parse_m(const char *val_str) {
 }
 ```
 
-SPANK環境変数は `job_desc_msg_t.spank_job_env[]` に格納されてコントローラへ伝達される。
+job control 環境変数は `job_desc_msg_t.spank_job_env[]` に格納されてコントローラへ伝達される。
+Slurm は `spank_job_control_setenv(sp, "RSC_*", ...)` で格納した変数に自動で `SPANK_` を付加するため、
+slurmctld からは `SPANK_RSC_*` として参照できる（`RSC_ENV_*` マクロはこの名前を定義している）。
 
 ### 4-5. コンテキスト別動作まとめ
 
 | コンテキスト | 場所 | 動作 |
 |---|---|---|
-| `S_CTX_ALLOCATOR` | sbatch / salloc | `--rsc` を解析、SPANK環境変数セット |
-| `S_CTX_LOCAL` | srun | 同上 |
-| `S_CTX_REMOTE` | slurmstepd | `SLURM_RSC_*` 環境変数をジョブ実行環境にセット（`slurm_spank_user_init`） |
+| `S_CTX_LOCAL` | sbatch / srun | `--rsc` を解析、job control env (`RSC_*`) にセット |
+| `S_CTX_ALLOCATOR` | salloc | 同上 |
+| `S_CTX_REMOTE` | slurmstepd | `slurm_spank_init_post_opt` は即 return。`slurm_spank_user_init` が `SLURM_RSC_*` をジョブ実行環境にセット |
 | `S_CTX_JOB_SCRIPT` | prolog/epilog | OMP_NUM_THREADS 等を環境変数から設定可 |
 
 ### 4-6. ユーザジョブへの環境変数伝搬
@@ -1177,56 +1220,46 @@ p×c = 32 < C=64 → コア指定モード、各コア1スレッドのみ使用
 `t` の値は `OMP_NUM_THREADS` として job prolog または  
 SPANK `slurm_spank_user_init()` でセットする。
 
+REMOTE コンテキスト（slurmstepd）で実行される。
+`SPANK_RSC_*`（job control env 由来、Slurm が SPANK_ を付加した名前）を
+`spank_getenv()` で読み取り、`spank_setenv()` でユーザジョブ環境変数 `SLURM_RSC_*` にコピーする。
+
 ```c
 int slurm_spank_user_init(spank_t sp, int ac, char **av)
 {
-    char buf[256];
+    char gbuf[32];
+    char c_eff_buf[32];
 
-    // OMP_NUM_THREADS
-    if (spank_getenv(sp, "SPANK_RSC_T", buf, sizeof(buf)) == ESPANK_SUCCESS)
-        spank_setenv(sp, "OMP_NUM_THREADS", buf, 0);  // 上書きしない
-
-    // OMP_PROC_BIND / OMP_PLACES: c と t の関係に応じて自動設定（CPU モード時のみ）
-    // GPU モード時は SPANK_RSC_C が未設定のためブロック全体をスキップ
-    char c_buf[32], t_buf[32];
-    if (spank_getenv(sp, "SPANK_RSC_C", c_buf, sizeof(c_buf)) == ESPANK_SUCCESS &&
-        spank_getenv(sp, "SPANK_RSC_T", t_buf, sizeof(t_buf)) == ESPANK_SUCCESS) {
-        int c_val = atoi(c_buf);
-        int t_val = atoi(t_buf);
-        const char *proc_bind, *places;
-        if (c_val == t_val) {
-            proc_bind = "close";  places = "cores";    // コアとスレッドが 1:1
-        } else if (c_val < t_val) {
-            proc_bind = "close";  places = "threads";  // SMT: 1コアに複数スレッド
-        } else {                                        // c_val > t_val
-            proc_bind = "spread"; places = "cores";    // コアを間引いて分散配置
-        }
-        spank_setenv(sp, "OMP_PROC_BIND", proc_bind, 0);  // 上書きしない
-        spank_setenv(sp, "OMP_PLACES",    places,    0);  // 上書きしない
+    // GPU モードか確認。SPANK_RSC_G が存在すれば GPU モード
+    _copy_control_to_job_env(sp, RSC_ENV_SPEC, "SLURM_RSC_SPEC", 1);
+    if (spank_getenv(sp, RSC_ENV_G, gbuf, sizeof(gbuf)) == ESPANK_SUCCESS) {
+        _copy_control_to_job_env(sp, RSC_ENV_G, "SLURM_RSC_G", 1);
+        return 0;  // GPU モード: OMP_* と SLURM_RSC_P/T/C/M は不要
     }
 
-    // SLURM_RSC_* をジョブ実行環境に伝搬（sec 4-6 参照）
-    if (spank_getenv(sp, "SPANK_RSC_SPEC", buf, sizeof(buf)) == ESPANK_SUCCESS)
-        spank_setenv(sp, "SLURM_RSC_SPEC", buf, 1);
-    if (spank_getenv(sp, "SPANK_RSC_P", buf, sizeof(buf)) == ESPANK_SUCCESS)
-        spank_setenv(sp, "SLURM_RSC_P", buf, 1);
-    if (spank_getenv(sp, "SPANK_RSC_T", buf, sizeof(buf)) == ESPANK_SUCCESS)
-        spank_setenv(sp, "SLURM_RSC_T", buf, 1);
-    if (spank_getenv(sp, "SPANK_RSC_C", buf, sizeof(buf)) == ESPANK_SUCCESS)
-        spank_setenv(sp, "SLURM_RSC_C", buf, 1);
-    if (spank_getenv(sp, "SPANK_RSC_M", buf, sizeof(buf)) == ESPANK_SUCCESS)
-        spank_setenv(sp, "SLURM_RSC_M", buf, 1);
+    // CPU モード: 全変数をジョブ環境にコピー
+    _copy_control_to_job_env(sp, RSC_ENV_P, "SLURM_RSC_P", 1);
+    _copy_control_to_job_env(sp, RSC_ENV_T, "SLURM_RSC_T", 1);
+    _copy_control_to_job_env(sp, RSC_ENV_C, "SLURM_RSC_C", 1);
+    _copy_control_to_job_env(sp, RSC_ENV_M, "SLURM_RSC_M", 1);
+
     // SLURM_RSC_C_EFF: job_submit が cpus_per_task = c_eff をセット済み
     // → Slurm が SLURM_CPUS_PER_TASK に自動反映するのでそのまま転写
-    if (spank_getenv(sp, "SLURM_CPUS_PER_TASK", buf, sizeof(buf)) == ESPANK_SUCCESS)
-        spank_setenv(sp, "SLURM_RSC_C_EFF", buf, 1);
-    // GPU モード時のみ
-    if (spank_getenv(sp, "SPANK_RSC_G", buf, sizeof(buf)) == ESPANK_SUCCESS)
-        spank_setenv(sp, "SLURM_RSC_G", buf, 1);
+    if (spank_getenv(sp, "SLURM_CPUS_PER_TASK", c_eff_buf, sizeof(c_eff_buf)) == ESPANK_SUCCESS)
+        spank_setenv(sp, "SLURM_RSC_C_EFF", c_eff_buf, 1);
+
+    // OMP デフォルト設定（ユーザが設定済みの場合は上書きしない）
+    // t を OMP_NUM_THREADS に、c と t の関係に応じて OMP_PROC_BIND / OMP_PLACES をセット
+    // GPU モード時はこのブロック全体をスキップ済み（上で return）
+    _set_omp_defaults(sp);
 
     return 0;
 }
 ```
+
+`_copy_control_to_job_env(sp, src, dst, overwrite)` は
+`spank_getenv(sp, src, ...)` で SPANK_RSC_* を読み取り
+`spank_setenv(sp, dst, ...)` で SLURM_RSC_* にコピーするヘルパー。
 
 ---
 
