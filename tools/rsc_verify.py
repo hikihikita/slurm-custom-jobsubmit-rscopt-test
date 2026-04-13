@@ -26,6 +26,9 @@ TERMINAL_JOB_STATES = set([
     "TIMEOUT",
 ])
 
+RUNTIME_ENV_PATTERN = r"^(SLURM_RSC|OMP_|SLURM_CPUS_PER_TASK|SLURM_NTASKS|SLURM_TASKS_PER_NODE|SLURM_JOB_NUM_NODES)="
+DEFAULT_ISSUES_TITLE = "Codex 改善依頼メモ"
+
 
 def utc_timestamp():
     return datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -145,10 +148,11 @@ HOSTNAME=$(hostname)
 PWD=$(pwd)
 EOF
 
-env | grep -E '^(SLURM_RSC|OMP_)' | sort > {env_dump_path} || true
+env | grep -E '{env_pattern}' | sort > {env_dump_path} || true
 exec bash {payload_path}
 """.format(
         meta_path=shlex.quote(meta_path),
+        env_pattern=RUNTIME_ENV_PATTERN,
         env_dump_path=shlex.quote(env_dump_path),
         payload_path=shlex.quote(payload_path),
     )
@@ -227,7 +231,7 @@ def fetch_sacct(job_id):
             "--noheader",
             "false",
             "--format",
-            "JobID,JobName%30,State,ExitCode,Elapsed,AllocTRES,ReqTRES",
+            "JobID,JobName%30,State,ExitCode,Elapsed,NTasks,NNodes,ReqCPUS,ReqMem,ReqTRES,AllocTRES,TresPerTask",
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -236,18 +240,75 @@ def fetch_sacct(job_id):
     if result.returncode != 0:
         return {"error": result.stderr.strip(), "rows": []}
     rows = parse_sacct_parsable(
-        "JobID|JobName|State|ExitCode|Elapsed|AllocTRES|ReqTRES\n" + result.stdout
+        "JobID|JobName|State|ExitCode|Elapsed|NTasks|NNodes|ReqCPUS|ReqMem|ReqTRES|AllocTRES|TresPerTask\n"
+        + result.stdout
     )
     return {"rows": rows}
 
 
-def merged_job_view(scontrol_data, sacct_data):
+def merged_job_view(scontrol_data, sacct_data, runtime_env, runtime_meta):
     merged = dict(scontrol_data)
+
     rows = sacct_data.get("rows") or []
     if rows:
         first = rows[0]
         for key, value in first.items():
             merged["sacct." + key] = value
+
+    normalized = {}
+    alias_map = {
+        "job_id": [
+            runtime_meta.get("SLURM_JOB_ID"),
+            merged.get("JobId"),
+            merged.get("sacct.JobID"),
+        ],
+        "state": [
+            merged.get("JobState"),
+            merged.get("sacct.State"),
+        ],
+        "nodes": [
+            merged.get("NumNodes"),
+            merged.get("sacct.NNodes"),
+            runtime_env.get("SLURM_JOB_NUM_NODES"),
+        ],
+        "ntasks": [
+            merged.get("NumTasks"),
+            merged.get("sacct.NTasks"),
+            runtime_env.get("SLURM_NTASKS"),
+        ],
+        "cpus_per_task": [
+            merged.get("CPUs/Task"),
+            runtime_env.get("SLURM_CPUS_PER_TASK"),
+        ],
+        "num_cpus": [
+            merged.get("NumCPUs"),
+            merged.get("sacct.ReqCPUS"),
+        ],
+        "tasks_per_node": [
+            runtime_env.get("SLURM_TASKS_PER_NODE"),
+        ],
+        "req_tres": [
+            merged.get("sacct.ReqTRES"),
+            merged.get("ReqTRES"),
+        ],
+        "alloc_tres": [
+            merged.get("sacct.AllocTRES"),
+        ],
+        "tres_per_task": [
+            merged.get("TresPerTask"),
+            merged.get("sacct.TresPerTask"),
+        ],
+        "req_mem": [
+            merged.get("sacct.ReqMem"),
+        ],
+    }
+
+    for key, candidates in alias_map.items():
+        for value in candidates:
+            if value not in (None, ""):
+                normalized[key] = value
+                break
+    merged["normalized"] = normalized
     return merged
 
 
@@ -257,6 +318,19 @@ def check_contains(text, patterns, label):
         if pattern not in text:
             failures.append("{0} does not contain expected text: {1}".format(label, pattern))
     return failures
+
+
+def check_contains_any(text, patterns, label):
+    if not patterns:
+        return []
+    for pattern in patterns:
+        if pattern in text:
+            return []
+    return [
+        "{0} does not contain any expected text: {1}".format(
+            label, ", ".join(patterns)
+        )
+    ]
 
 
 def check_mapping(actual, expected, label):
@@ -291,6 +365,7 @@ def format_submit_args(submit_args):
 
 
 def build_case_summary(case_data, result_data, case_dir, failures):
+    normalized = result_data.get("job", {}).get("normalized", {})
     return {
         "id": case_data["id"],
         "description": case_data.get("description", ""),
@@ -305,6 +380,7 @@ def build_case_summary(case_data, result_data, case_dir, failures):
         "submit_returncode": result_data["submit"]["returncode"],
         "artifacts_dir": case_dir,
         "poll_error": result_data.get("poll_error"),
+        "normalized_job": normalized,
     }
 
 
@@ -379,15 +455,39 @@ def evaluate_case(case_data, result_data):
                 expect["submit_result"], submit_result
             )
         )
+    if "submit_result_in" in expect and submit_result not in expect["submit_result_in"]:
+        failures.append(
+            "submit_result expected one of {0!r} but got {1!r}".format(
+                expect["submit_result_in"], submit_result
+            )
+        )
 
     failures.extend(
         check_contains(
-            result_data["submit"]["stdout"], expect.get("submit_stdout_contains", []), "submit.stdout"
+            result_data["submit"]["stdout"],
+            expect.get("submit_stdout_contains", []),
+            "submit.stdout",
         )
     )
     failures.extend(
         check_contains(
-            result_data["submit"]["stderr"], expect.get("submit_stderr_contains", []), "submit.stderr"
+            result_data["submit"]["stderr"],
+            expect.get("submit_stderr_contains", []),
+            "submit.stderr",
+        )
+    )
+    failures.extend(
+        check_contains_any(
+            result_data["submit"]["stdout"],
+            expect.get("submit_stdout_contains_any", []),
+            "submit.stdout",
+        )
+    )
+    failures.extend(
+        check_contains_any(
+            result_data["submit"]["stderr"],
+            expect.get("submit_stderr_contains_any", []),
+            "submit.stderr",
         )
     )
     failures.extend(
@@ -398,11 +498,14 @@ def evaluate_case(case_data, result_data):
     )
 
     failures.extend(check_mapping(result_data.get("env", {}), expect.get("env", {}), "env"))
+    failures.extend(check_absent(result_data.get("env", {}), expect.get("env_absent", []), "env"))
+    failures.extend(check_mapping(result_data.get("job", {}), expect.get("job", {}), "job"))
     failures.extend(
-        check_absent(result_data.get("env", {}), expect.get("env_absent", []), "env")
-    )
-    failures.extend(
-        check_mapping(result_data.get("job", {}), expect.get("job", {}), "job")
+        check_mapping(
+            result_data.get("job", {}).get("normalized", {}),
+            expect.get("job_normalized", {}),
+            "job_normalized",
+        )
     )
 
     if "job_state_in" in expect:
@@ -480,9 +583,7 @@ def run_case(case_path, run_dir, timeout_seconds, poll_interval):
     if os.path.exists(runtime_meta_path):
         runtime_meta = parse_env_dump(read_text(runtime_meta_path))
 
-    job_view = merged_job_view(scontrol_data, sacct_data)
-    if runtime_meta.get("SLURM_JOB_ID") and "runtime.SLURM_JOB_ID" not in job_view:
-        job_view["runtime.SLURM_JOB_ID"] = runtime_meta.get("SLURM_JOB_ID")
+    job_view = merged_job_view(scontrol_data, sacct_data, runtime_env, runtime_meta)
 
     result_data = {
         "case_id": case_data["id"],
@@ -544,11 +645,230 @@ def run_suite(case_paths, run_id, timeout_seconds, poll_interval):
 
 
 def report_run(run_path):
+    summary = load_run_summary(run_path)
+    print_summary(summary)
+
+
+def load_run_summary(run_path):
     summary_path = os.path.join(run_path, "summary.json")
     if not os.path.exists(summary_path):
         raise SystemExit("summary.json not found under {0}".format(run_path))
-    summary = json.load(open(summary_path, "r"))
-    print_summary(summary)
+    with open(summary_path, "r") as fh:
+        return json.load(fh)
+
+
+def resolve_run_path(run_arg):
+    if os.path.isdir(run_arg):
+        return run_arg
+    return os.path.join("artifacts", "runs", run_arg)
+
+
+def load_run_details(run_path):
+    summary = load_run_summary(run_path)
+    detailed_cases = []
+    for case_summary in summary.get("cases", []):
+        case_dir = os.path.join(run_path, case_summary["id"])
+        detail = {"summary": case_summary}
+        for name in ["case", "submit", "job", "assertions"]:
+            path = os.path.join(case_dir, name + ".json")
+            if os.path.exists(path):
+                with open(path, "r") as fh:
+                    detail[name] = json.load(fh)
+            else:
+                detail[name] = {}
+        for name in ["stdout", "stderr"]:
+            path = os.path.join(case_dir, name + ".txt")
+            detail[name] = read_text(path) if os.path.exists(path) else ""
+        detailed_cases.append(detail)
+    return summary, detailed_cases
+
+
+def format_mapping_lines(mapping, keys=None):
+    lines = []
+    used_keys = keys or sorted(mapping.keys())
+    for key in used_keys:
+        if key not in mapping:
+            continue
+        value = mapping.get(key)
+        if value in (None, "", {}):
+            continue
+        lines.append("- `{0}`: `{1}`".format(key, value))
+    return lines
+
+
+def trim_block(text, limit):
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "\n... (truncated)"
+
+
+def render_markdown_report(run_path, summary, detailed_cases):
+    lines = []
+    lines.append("# rsc_verify Run Report")
+    lines.append("")
+    lines.append("- run_id: `{0}`".format(summary["run_id"]))
+    lines.append("- artifacts: `{0}`".format(run_path))
+    lines.append("- started_at: `{0}`".format(summary.get("started_at", "")))
+    lines.append("- completed_at: `{0}`".format(summary.get("completed_at", "")))
+    lines.append("- passed: `{0}`".format(summary.get("passed", 0)))
+    lines.append("- failed: `{0}`".format(summary.get("failed", 0)))
+    lines.append("")
+    lines.append("## Case Results")
+    lines.append("")
+
+    for detail in detailed_cases:
+        case_summary = detail["summary"]
+        case_data = detail.get("case", {})
+        job_normalized = detail.get("job", {}).get("job", {}).get("normalized", {})
+        status = "PASS" if case_summary.get("passed") else "FAIL"
+        lines.append("### {0} {1}".format(status, case_summary["id"]))
+        lines.append("")
+        lines.append(case_summary.get("description", ""))
+        lines.append("")
+        lines.append("- submit_mode: `{0}`".format(case_summary.get("submit_mode", "")))
+        lines.append("- submit_command: `{0}`".format(case_summary.get("submit_command", "")))
+        if case_summary.get("job_id"):
+            lines.append("- job_id: `{0}`".format(case_summary["job_id"]))
+        if case_summary.get("job_state"):
+            lines.append("- job_state: `{0}`".format(case_summary["job_state"]))
+        if case_summary.get("notes_ref"):
+            lines.append("- notes_ref: {0}".format(", ".join("`{0}`".format(item) for item in case_summary["notes_ref"])))
+        lines.append("- artifacts: `{0}`".format(case_summary.get("artifacts_dir", "")))
+        lines.append("")
+
+        if job_normalized:
+            lines.append("Observed job shape:")
+            lines.extend(format_mapping_lines(
+                job_normalized,
+                ["state", "nodes", "ntasks", "cpus_per_task", "num_cpus", "tasks_per_node", "req_tres", "alloc_tres", "tres_per_task", "req_mem"],
+            ))
+            lines.append("")
+
+        runtime_env = detail.get("job", {}).get("env", {})
+        if runtime_env:
+            lines.append("Observed env:")
+            lines.extend(format_mapping_lines(runtime_env))
+            lines.append("")
+
+        if not case_summary.get("passed"):
+            lines.append("Failures:")
+            for failure in case_summary.get("failures", []):
+                lines.append("- {0}".format(failure))
+            lines.append("")
+
+        submit_stderr = trim_block(detail.get("submit", {}).get("stderr", ""), 1200)
+        if submit_stderr:
+            lines.append("submit stderr:")
+            lines.append("```text")
+            lines.append(submit_stderr)
+            lines.append("```")
+            lines.append("")
+
+        stdout_text = trim_block(detail.get("stdout", ""), 800)
+        if stdout_text:
+            lines.append("job stdout:")
+            lines.append("```text")
+            lines.append(stdout_text)
+            lines.append("```")
+            lines.append("")
+
+        if case_data.get("expect"):
+            lines.append("Expected checks:")
+            lines.append("```json")
+            lines.append(json.dumps(case_data["expect"], indent=2, sort_keys=True))
+            lines.append("```")
+            lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_markdown_issues(run_path, summary, detailed_cases, title):
+    failed = [detail for detail in detailed_cases if not detail["summary"].get("passed")]
+
+    lines = []
+    lines.append("# {0}".format(title))
+    lines.append("")
+    lines.append("- target_note: `notes/slurm-rsc-option-impl-v2.md`")
+    lines.append("- run_id: `{0}`".format(summary["run_id"]))
+    lines.append("- artifacts: `{0}`".format(run_path))
+    lines.append("- failed_cases: `{0}`".format(len(failed)))
+    lines.append("")
+
+    if not failed:
+        lines.append("失敗ケースはありません。")
+        lines.append("")
+        return "\n".join(lines)
+
+    lines.append("## 失敗ケース")
+    lines.append("")
+
+    for detail in failed:
+        case_summary = detail["summary"]
+        case_data = detail.get("case", {})
+        job_data = detail.get("job", {})
+        normalized = job_data.get("job", {}).get("normalized", {})
+        lines.append("### {0}".format(case_summary["id"]))
+        lines.append("")
+        lines.append("- description: {0}".format(case_summary.get("description", "")))
+        lines.append("- submit_command: `{0}`".format(case_summary.get("submit_command", "")))
+        lines.append("- job_id: `{0}`".format(case_summary.get("job_id") or ""))
+        lines.append("- job_state: `{0}`".format(case_summary.get("job_state") or ""))
+        if case_summary.get("notes_ref"):
+            lines.append("- notes_ref: {0}".format(", ".join("`{0}`".format(item) for item in case_summary["notes_ref"])))
+        lines.append("- artifacts: `{0}`".format(case_summary.get("artifacts_dir", "")))
+        lines.append("")
+
+        lines.append("期待:")
+        lines.append("```json")
+        lines.append(json.dumps(case_data.get("expect", {}), indent=2, sort_keys=True))
+        lines.append("```")
+        lines.append("")
+
+        lines.append("実測:")
+        observed = {
+            "submit_returncode": detail.get("submit", {}).get("returncode"),
+            "submit_stdout": trim_block(detail.get("submit", {}).get("stdout", ""), 600),
+            "submit_stderr": trim_block(detail.get("submit", {}).get("stderr", ""), 600),
+            "env": job_data.get("env", {}),
+            "job_normalized": normalized,
+            "job_raw": {
+                "JobState": job_data.get("job", {}).get("JobState"),
+                "NumCPUs": job_data.get("job", {}).get("NumCPUs"),
+                "NumTasks": job_data.get("job", {}).get("NumTasks"),
+                "CPUs/Task": job_data.get("job", {}).get("CPUs/Task"),
+                "ReqTRES": job_data.get("job", {}).get("sacct.ReqTRES"),
+                "AllocTRES": job_data.get("job", {}).get("sacct.AllocTRES"),
+                "TresPerTask": job_data.get("job", {}).get("sacct.TresPerTask"),
+            },
+        }
+        lines.append("```json")
+        lines.append(json.dumps(observed, indent=2, sort_keys=True))
+        lines.append("```")
+        lines.append("")
+
+        lines.append("差分:")
+        for failure in case_summary.get("failures", []):
+            lines.append("- {0}".format(failure))
+        lines.append("")
+
+        lines.append("Codex への依頼ポイント:")
+        lines.append("- `notes/slurm-rsc-option-impl-v2.md` の該当節と照合し、期待との差分原因を特定する。")
+        lines.append("- submit command で再現し、環境変数・job shape・reject/warn 挙動を修正する。")
+        lines.append("- 修正後は同じケースを再実行し、artifacts を更新して差分が消えることを確認する。")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def emit_markdown(content, output_path):
+    if output_path:
+        write_text(output_path, content)
+        print(output_path)
+        return
+    sys.stdout.write(content)
 
 
 def build_arg_parser():
@@ -574,6 +894,21 @@ def build_arg_parser():
     report_parser = sub.add_parser("report", help="show a saved run summary")
     report_parser.add_argument("--run", required=True, help="run directory name or path")
 
+    md_report_parser = sub.add_parser("markdown-report", help="render a saved run as Markdown")
+    md_report_parser.add_argument("--run", required=True, help="run directory name or path")
+    md_report_parser.add_argument("--output", help="write Markdown to the specified path")
+
+    md_issues_parser = sub.add_parser(
+        "markdown-issues", help="render failed cases as a Codex handoff Markdown"
+    )
+    md_issues_parser.add_argument("--run", required=True, help="run directory name or path")
+    md_issues_parser.add_argument("--output", help="write Markdown to the specified path")
+    md_issues_parser.add_argument(
+        "--title",
+        default=DEFAULT_ISSUES_TITLE,
+        help="document title",
+    )
+
     return parser
 
 
@@ -593,10 +928,20 @@ def main():
         print("artifacts:", run_dir)
         return 0 if summary["failed"] == 0 else 1
 
-    run_arg = args.run
-    if not os.path.isdir(run_arg):
-        run_arg = os.path.join("artifacts", "runs", run_arg)
-    report_run(run_arg)
+    run_path = resolve_run_path(args.run)
+
+    if args.subcommand == "report":
+        report_run(run_path)
+        return 0
+
+    summary, detailed_cases = load_run_details(run_path)
+    if args.subcommand == "markdown-report":
+        content = render_markdown_report(run_path, summary, detailed_cases)
+        emit_markdown(content, args.output)
+        return 0
+
+    content = render_markdown_issues(run_path, summary, detailed_cases, args.title)
+    emit_markdown(content, args.output)
     return 0
 
 

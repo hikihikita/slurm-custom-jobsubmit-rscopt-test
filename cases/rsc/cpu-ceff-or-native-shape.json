@@ -1,0 +1,30 @@
+{
+  "description": "CPU mode should expose c_eff/native job shape through SLURM_CPUS_PER_TASK and normalized job fields",
+  "expect": {
+    "env": {
+      "SLURM_RSC_C": "2",
+      "SLURM_RSC_P": "2",
+      "SLURM_RSC_SPEC": "p=2:t=2:c=2:m=1G",
+      "SLURM_RSC_T": "2"
+    },
+    "job_normalized": {
+      "ntasks": "2"
+    },
+    "job_state_in": [
+      "COMPLETED"
+    ],
+    "submit_result": "accepted"
+  },
+  "id": "cpu-ceff-or-native-shape",
+  "notes_ref": [
+    "notes/slurm-rsc-option-impl-v2.md:309",
+    "notes/slurm-rsc-option-impl-v2.md:474",
+    "notes/slurm-rsc-option-impl-v2.md:1277"
+  ],
+  "script": "printenv SLURM_RSC_SPEC || true\nprintenv SLURM_RSC_C || true\nprintenv SLURM_RSC_C_EFF || true\nprintenv SLURM_CPUS_PER_TASK || true\nprintenv SLURM_NTASKS || true\nprintenv SLURM_TASKS_PER_NODE || true\n",
+  "submit_args": [
+    "--rsc",
+    "p=2:t=2:c=2:m=1G"
+  ],
+  "submit_mode": "sbatch"
+}

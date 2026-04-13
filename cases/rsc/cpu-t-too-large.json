@@ -8,7 +8,7 @@
   },
   "id": "cpu-t-too-large",
   "notes_ref": [
-    "notes/slurm-rsc-option-impl.md:380"
+    "notes/slurm-rsc-option-impl-v2.md:467"
   ],
   "script": "echo should-not-run\n",
   "submit_args": [

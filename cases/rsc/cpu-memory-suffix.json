@@ -1,9 +1,15 @@
 {
-  "description": "m suffix parsing should preserve MiB-normalized value in SLURM_RSC_M",
+  "description": "m suffix parsing should preserve MiB-normalized value and expose native CPU shape",
   "expect": {
     "env": {
-      "SLURM_RSC_C_EFF": "4",
-      "SLURM_RSC_M": "4096"
+      "SLURM_RSC_C": "1",
+      "SLURM_RSC_M": "4096",
+      "SLURM_RSC_P": "1",
+      "SLURM_RSC_SPEC": "p=1:c=1:m=4G",
+      "SLURM_RSC_T": "1"
+    },
+    "job_normalized": {
+      "ntasks": "1"
     },
     "job_state_in": [
       "COMPLETED"
@@ -12,10 +18,11 @@
   },
   "id": "cpu-memory-suffix",
   "notes_ref": [
-    "notes/slurm-rsc-option-impl.md:204",
-    "notes/slurm-rsc-option-impl.md:1246"
+    "notes/slurm-rsc-option-impl-v2.md:306",
+    "notes/slurm-rsc-option-impl-v2.md:472",
+    "notes/slurm-rsc-option-impl-v2.md:505"
   ],
-  "script": "printenv SLURM_RSC_M\n",
+  "script": "printenv SLURM_RSC_SPEC || true\nprintenv SLURM_RSC_M || true\nprintenv SLURM_CPUS_PER_TASK || true\nprintenv SLURM_NTASKS || true\n",
   "submit_args": [
     "--rsc",
     "p=1:c=1:m=4G"

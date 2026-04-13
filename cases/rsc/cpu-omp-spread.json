@@ -6,8 +6,8 @@
       "OMP_PLACES": "cores",
       "OMP_PROC_BIND": "spread",
       "SLURM_RSC_C": "4",
-      "SLURM_RSC_C_EFF": "4",
       "SLURM_RSC_P": "8",
+      "SLURM_RSC_SPEC": "p=8:c=4:t=1",
       "SLURM_RSC_T": "1"
     },
     "job_state_in": [
@@ -17,10 +17,11 @@
   },
   "id": "cpu-omp-spread",
   "notes_ref": [
-    "notes/slurm-rsc-option-impl.md:1204",
-    "notes/slurm-rsc-option-impl.md:1251"
+    "notes/slurm-rsc-option-impl-v2.md:310",
+    "notes/slurm-rsc-option-impl-v2.md:311",
+    "notes/slurm-rsc-option-impl-v2.md:333"
   ],
-  "script": "printenv OMP_NUM_THREADS\nprintenv OMP_PROC_BIND\nprintenv OMP_PLACES\n",
+  "script": "printenv OMP_NUM_THREADS\nprintenv OMP_PROC_BIND\nprintenv OMP_PLACES\nprintenv SLURM_RSC_T || true\nprintenv SLURM_RSC_C || true\n",
   "submit_args": [
     "--rsc",
     "p=8:c=4:t=1"

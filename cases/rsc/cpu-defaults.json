@@ -1,12 +1,11 @@
 {
-  "description": "--rsc omitted: CPU default flow should be accepted and expose default-derived env",
+  "description": "--rsc omitted: CPU default flow should expose default-derived SLURM_RSC_* and OMP_*",
   "expect": {
     "env": {
       "OMP_NUM_THREADS": "1",
-      "OMP_PLACES": "threads",
+      "OMP_PLACES": "cores",
       "OMP_PROC_BIND": "close",
       "SLURM_RSC_C": "1",
-      "SLURM_RSC_C_EFF": "1",
       "SLURM_RSC_P": "1",
       "SLURM_RSC_SPEC": "",
       "SLURM_RSC_T": "1"
@@ -21,11 +20,11 @@
   },
   "id": "cpu-defaults",
   "notes_ref": [
-    "notes/slurm-rsc-option-impl.md:138",
-    "notes/slurm-rsc-option-impl.md:152",
-    "notes/slurm-rsc-option-impl.md:1240"
+    "notes/slurm-rsc-option-impl-v2.md:303",
+    "notes/slurm-rsc-option-impl-v2.md:309",
+    "notes/slurm-rsc-option-impl-v2.md:310"
   ],
-  "script": "echo cpu-defaults\nprintenv SLURM_RSC_SPEC || true\nprintenv SLURM_RSC_P || true\nprintenv SLURM_RSC_T || true\nprintenv SLURM_RSC_C || true\nprintenv SLURM_RSC_M || true\n",
+  "script": "echo cpu-defaults\nprintenv SLURM_RSC_SPEC || true\nprintenv SLURM_RSC_P || true\nprintenv SLURM_RSC_T || true\nprintenv SLURM_RSC_C || true\nprintenv SLURM_RSC_M || true\nprintenv OMP_NUM_THREADS || true\nprintenv OMP_PROC_BIND || true\nprintenv OMP_PLACES || true\n",
   "submit_args": [],
   "submit_mode": "sbatch"
 }

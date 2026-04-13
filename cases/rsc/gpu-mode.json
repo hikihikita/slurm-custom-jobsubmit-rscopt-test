@@ -2,7 +2,8 @@
   "description": "GPU mode should be accepted and expose SLURM_RSC_G without CPU env keys",
   "expect": {
     "env": {
-      "SLURM_RSC_G": "1"
+      "SLURM_RSC_G": "1",
+      "SLURM_RSC_SPEC": "g=1"
     },
     "env_absent": [
       "OMP_NUM_THREADS",
@@ -21,9 +22,11 @@
   },
   "id": "gpu-mode",
   "notes_ref": [
-    "notes/slurm-rsc-option-impl.md:1233"
+    "notes/slurm-rsc-option-impl-v2.md:308",
+    "notes/slurm-rsc-option-impl-v2.md:314",
+    "notes/slurm-rsc-option-impl-v2.md:786"
   ],
-  "script": "printenv SLURM_RSC_G\nprintenv SLURM_RSC_P || true\n",
+  "script": "printenv SLURM_RSC_SPEC || true\nprintenv SLURM_RSC_G\nprintenv SLURM_RSC_P || true\nprintenv OMP_NUM_THREADS || true\n",
   "submit_args": [
     "--rsc",
     "g=1"
